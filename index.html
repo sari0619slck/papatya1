@@ -1,0 +1,336 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Papatya Çizimi — Canvas</title>
+  <style>
+    :root {
+      --bg: #f6fbff;
+      --card: #ffffff;
+    }
+    html,body { height:100%; margin:0; font-family:Inter,system-ui,Segoe UI,Roboto; background:var(--bg); display:flex; align-items:center; justify-content:center; }
+    .frame {
+      width:min(980px, 95vw);
+      background:var(--card);
+      padding:18px;
+      border-radius:16px;
+      box-shadow: 0 10px 30px rgba(20,30,60,0.08);
+      display:grid;
+      grid-template-columns: 1fr 260px;
+      gap:16px;
+      align-items:start;
+    }
+    canvas { width:100%; height:640px; border-radius:12px; background: linear-gradient(180deg, #e9f4ff 0%, #ffffff 100%); display:block; }
+    .controls { padding:8px 6px; }
+    label { display:block; font-size:13px; margin-top:8px; color:#233; }
+    input[type=range], input[type=number] { width:100%; }
+    .small { font-size:12px; color:#556; margin-top:4px; }
+    button { margin-top:12px; width:100%; padding:8px 10px; border-radius:8px; border:0; background:#2b7cff; color:white; cursor:pointer; font-weight:600; }
+    footer { grid-column:1/-1; font-size:12px; color:#6b7280; margin-top:8px; text-align:right; }
+  </style>
+</head>
+<body>
+  <div class="frame">
+    <div>
+      <canvas id="c"></canvas>
+    </div>
+
+    <div class="controls">
+      <label>Petal sayısı: <span id="petalCountLabel">22</span></label>
+      <input id="petalCount" type="range" min="8" max="48" value="22" />
+      
+      <label>Petal uzunluğu: <span id="petalLenLabel">1.00</span></label>
+      <input id="petalLen" type="range" min="0.6" max="1.6" step="0.01" value="1.00" />
+      
+      <label>Merkez boyutu: <span id="centerSizeLabel">0.28</span></label>
+      <input id="centerSize" type="range" min="0.16" max="0.45" step="0.01" value="0.28" />
+      
+      <label>Rastgelelik (doğallık): <span id="randLabel">0.25</span></label>
+      <input id="rand" type="range" min="0" max="0.6" step="0.01" value="0.25" />
+      
+      <label>Çiçeğin eğimi (°): <span id="tiltLabel">-8</span></label>
+      <input id="tilt" type="range" min="-40" max="40" step="1" value="-8" />
+      
+      <button id="redraw">Yeniden Çiz</button>
+      <div class="small">Dosyayı VS Code'da kaydet ve tarayıcıda aç. Kaydırıcılarla (controls) papatya görünümünü ayarla.</div>
+    </div>
+
+    <footer>Canvas papatya — yaratıldı: <strong>Visual Studio Code</strong></footer>
+  </div>
+
+<script>
+(() => {
+  const canvas = document.getElementById('c');
+  const ctx = canvas.getContext('2d');
+
+  // DPI-aware canvas
+  function resizeCanvas() {
+    const ratio = window.devicePixelRatio || 1;
+    const rect = canvas.getBoundingClientRect();
+    canvas.width = Math.round(rect.width * ratio);
+    canvas.height = Math.round(rect.height * ratio);
+    ctx.setTransform(ratio, 0, 0, ratio, 0, 0);
+  }
+  window.addEventListener('resize', () => { resizeCanvas(); draw(); });
+
+  // Controls
+  const controls = {
+    petalCount: document.getElementById('petalCount'),
+    petalLen: document.getElementById('petalLen'),
+    centerSize: document.getElementById('centerSize'),
+    rand: document.getElementById('rand'),
+    tilt: document.getElementById('tilt'),
+    redraw: document.getElementById('redraw'),
+    labels: {
+      petalCountLabel: document.getElementById('petalCountLabel'),
+      petalLenLabel: document.getElementById('petalLenLabel'),
+      centerSizeLabel: document.getElementById('centerSizeLabel'),
+      randLabel: document.getElementById('randLabel'),
+      tiltLabel: document.getElementById('tiltLabel')
+    }
+  };
+
+  Object.values(controls.labels).forEach(l => {});
+  function updateLabels() {
+    controls.labels.petalCountLabel.textContent = controls.petalCount.value;
+    controls.labels.petalLenLabel.textContent = Number(controls.petalLen.value).toFixed(2);
+    controls.labels.centerSizeLabel.textContent = Number(controls.centerSize.value).toFixed(2);
+    controls.labels.randLabel.textContent = Number(controls.rand.value).toFixed(2);
+    controls.labels.tiltLabel.textContent = controls.tilt.value;
+  }
+
+  for (let k of ['petalCount','petalLen','centerSize','rand','tilt']) {
+    controls[k].addEventListener('input', () => { updateLabels(); draw(); });
+  }
+  controls.redraw.addEventListener('click', () => { draw(true); });
+
+  // Utility: random with seed-like behavior (not seeded, just deterministic-ish)
+  function randRange(min, max) { return min + Math.random() * (max - min); }
+
+  // Draw one petal using Bezier curve for a soft shape
+  function drawPetal(ctx, angle, radius, lengthFactor, widthFactor, color1, color2, wobble=0) {
+    ctx.save();
+    ctx.rotate(angle);
+    // Basic petal path centered at origin and pointing up
+    ctx.beginPath();
+    // move to slightly below center
+    ctx.moveTo(0, radius * 0.12);
+    // left curve
+    ctx.bezierCurveTo(
+      -widthFactor * radius * 0.18, radius * 0.06,
+      -widthFactor * radius * 0.6, -lengthFactor * radius * 0.45 + wobble,
+      0, -lengthFactor * radius * 1.0 + wobble
+    );
+    // right curve back
+    ctx.bezierCurveTo(
+      widthFactor * radius * 0.6, -lengthFactor * radius * 0.45 + wobble,
+      widthFactor * radius * 0.18, radius * 0.06,
+      0, radius * 0.12
+    );
+    ctx.closePath();
+
+    // radial gradient for petal shading
+    const g = ctx.createRadialGradient(0, -radius * 0.35, radius * 0.05, 0, -radius * 0.3, radius * 0.9);
+    g.addColorStop(0, color1);
+    g.addColorStop(0.6, color2);
+    g.addColorStop(1, 'rgba(255,255,255,0.03)');
+    ctx.fillStyle = g;
+    ctx.fill();
+
+    // subtle stroke
+    ctx.lineWidth = Math.max(0.6, radius * 0.008);
+    ctx.strokeStyle = 'rgba(30,30,30,0.08)';
+    ctx.stroke();
+
+    // light highlight
+    ctx.beginPath();
+    ctx.moveTo(0, radius * 0.05);
+    ctx.bezierCurveTo(
+      -widthFactor * radius * 0.05, radius * 0.01,
+      -widthFactor * radius * 0.35, -lengthFactor * radius * 0.18,
+      0, -lengthFactor * radius * 0.4
+    );
+    ctx.lineWidth = Math.max(0.5, radius * 0.006);
+    ctx.strokeStyle = 'rgba(255,255,255,0.55)';
+    ctx.stroke();
+
+    ctx.restore();
+  }
+
+  // Draw textured center (disk of seeds)
+  function drawCenter(ctx, radius, centerSize) {
+    const r = radius * centerSize;
+    // base radial gradient
+    const g = ctx.createRadialGradient(-r*0.15, -r*0.12, r*0.1, 0, 0, r*1.05);
+    g.addColorStop(0, '#ffe27a');
+    g.addColorStop(0.35, '#f3c24b');
+    g.addColorStop(1, '#7f5a10');
+    ctx.beginPath();
+    ctx.arc(0, 0, r, 0, Math.PI * 2);
+    ctx.fillStyle = g;
+    ctx.fill();
+
+    // many small dots to mimic seeds
+    const seeds = Math.round(r * r * 1.8);
+    for (let i = 0; i < seeds; i++) {
+      const ang = Math.random() * Math.PI * 2;
+      const rad = Math.sqrt(Math.random()) * r * 0.88;
+      const x = Math.cos(ang) * rad;
+      const y = Math.sin(ang) * rad * 0.9; // slightly elliptical
+      ctx.beginPath();
+      ctx.arc(x, y, Math.max(0.8, r * 0.02 * (0.6 + Math.random()*0.8)), 0, Math.PI*2);
+      // color variation
+      const tone = Math.random() * 40;
+      ctx.fillStyle = `rgba(${80 + tone}, ${40 + tone/1.5}, ${8}, ${0.95})`;
+      ctx.fill();
+    }
+
+    // top glossy
+    ctx.beginPath();
+    ctx.arc(-r*0.25, -r*0.3, r*0.18, 0, Math.PI*2);
+    ctx.fillStyle = 'rgba(255,255,255,0.08)';
+    ctx.fill();
+  }
+
+  // Draw stem and leaves
+  function drawStemAndLeaves(ctx, radius) {
+    ctx.save();
+    // stem
+    ctx.beginPath();
+    ctx.moveTo(0, radius*0.95);
+    ctx.quadraticCurveTo(radius*0.25, radius*1.6, radius*0.15, radius*3.6);
+    ctx.lineWidth = Math.max(6, radius*0.06);
+    ctx.strokeStyle = '#3a8a3a';
+    ctx.lineCap = 'round';
+    ctx.stroke();
+
+    // leaves - left and right
+    function leaf(cx, cy, scale, flip=1) {
+      ctx.save();
+      ctx.translate(cx, cy);
+      ctx.scale(flip*scale, scale);
+      ctx.beginPath();
+      ctx.moveTo(0,0);
+      ctx.bezierCurveTo(-radius*0.9, -radius*0.6, -radius*1.6, radius*0.8, 0, radius*1.6);
+      ctx.bezierCurveTo(radius*1.4, radius*0.9, radius*0.6, -radius*0.4, 0, 0);
+      ctx.closePath();
+      const g = ctx.createLinearGradient(-radius*0.8,0,radius*0.8,0);
+      g.addColorStop(0,'#569a47');
+      g.addColorStop(1,'#2d6b2b');
+      ctx.fillStyle = g;
+      ctx.fill();
+      ctx.lineWidth = Math.max(1.2, radius*0.008);
+      ctx.strokeStyle = 'rgba(20,40,20,0.15)';
+      ctx.stroke();
+
+      // midrib
+      ctx.beginPath();
+      ctx.moveTo(0, radius*0.18);
+      ctx.quadraticCurveTo(-radius*0.5, radius*0.8, 0, radius*1.2);
+      ctx.lineWidth = Math.max(1.2, radius*0.007);
+      ctx.strokeStyle = 'rgba(255,255,255,0.08)';
+      ctx.stroke();
+
+      ctx.restore();
+    }
+    leaf(-radius*0.5, radius*1.8, 0.9, -1);
+    leaf(radius*0.45, radius*2.5, 0.8, 1);
+
+    ctx.restore();
+  }
+
+  // Main draw
+  function draw(forceNewSeed=false) {
+    resizeCanvas();
+    ctx.clearRect(0,0,canvas.width,canvas.height);
+
+    // parameters
+    const petalCount = parseInt(controls.petalCount.value, 10);
+    const petalLen = parseFloat(controls.petalLen.value);
+    const centerSize = parseFloat(controls.centerSize.value);
+    const randomness = parseFloat(controls.rand.value);
+    const tiltDeg = parseFloat(controls.tilt.value);
+
+    // canvas geometry
+    const W = canvas.width / (window.devicePixelRatio || 1);
+    const H = canvas.height / (window.devicePixelRatio || 1);
+    const cx = W/2;
+    const cy = H*0.42;
+    // base radius that controls size scale
+    const baseR = Math.min(W, H) * 0.22;
+
+    // Background soft vignette
+    const bgGrad = ctx.createRadialGradient(cx, cy - baseR*0.2, baseR*0.3, cx, cy, Math.max(W,H)*0.9);
+    bgGrad.addColorStop(0,'rgba(255,255,255,0.0)');
+    bgGrad.addColorStop(1,'rgba(200,225,255,0.12)');
+    ctx.fillStyle = bgGrad;
+    ctx.fillRect(0,0,W,H);
+
+    ctx.save();
+    // move origin to flower center
+    ctx.translate(cx, cy);
+    ctx.rotate(tiltDeg * Math.PI / 180);
+
+    // draw lower stem/leaves first (so petals are on top)
+    drawStemAndLeaves(ctx, baseR);
+
+    // Slight shadow below the flower
+    ctx.save();
+    ctx.translate(0, baseR*0.8);
+    ctx.scale(1.2, 0.35);
+    ctx.beginPath();
+    ctx.ellipse(0, 0, baseR*0.6, baseR*0.25, 0, 0, Math.PI*2);
+    ctx.fillStyle = 'rgba(20,30,40,0.06)';
+    ctx.fill();
+    ctx.restore();
+
+    // Draw petals in layers for depth
+    const layers = 3;
+    for (let layer = 0; layer < layers; layer++) {
+      const layerOffset = (layer - 1) * 0.06 * baseR; // slightly push layers
+      const count = petalCount + (layer===1 ? Math.round(petalCount*0.05) : (layer===2 ? -Math.round(petalCount*0.06) : 0));
+      for (let i=0; i<count; i++) {
+        const t = i / count;
+        const angle = t * Math.PI * 2 + (layer * 0.02);
+        // petal radius start point - small offset outward for outer layers
+        const rad = baseR * (0.95 + layer*0.08);
+        // length/width factors slightly vary
+        const lengthFactor = 0.95 * petalLen * (1 + layer*0.08);
+        const widthFactor = 1.0 - layer*0.08 + (Math.sin(i*3.7 + layer)*0.05);
+        // subtle wobble for natural look
+        const wobble = (Math.sin(i*7.3 + layer*1.4) * 0.07 + (Math.random()-0.5)*0.2) * randomness * baseR;
+        // petal colors vary per layer
+        const colorA = `rgba(255,255,255,${1 - layer*0.04})`; // white-ish
+        const colorB = `rgba(${245 - layer*4}, ${245 - layer*6}, ${255}, ${0.98})`;
+        ctx.save();
+        // slight rotation jitter so petals don't look perfect
+        ctx.translate(0, layerOffset * (1 + 0.15 * Math.sin(i*1.3)));
+        ctx.rotate(angle);
+        // small radial offset for where petal base starts
+        ctx.translate(0, -rad*0.08);
+        drawPetal(ctx, 0, rad, lengthFactor, widthFactor, colorA, colorB, wobble);
+        ctx.restore();
+      }
+    }
+
+    // central disk (on top of petals)
+    drawCenter(ctx, baseR, centerSize);
+
+    // subtle highlight ring on petals
+    ctx.beginPath();
+    ctx.arc(0, 0, baseR * (centerSize + 0.12), 0, Math.PI*2);
+    ctx.lineWidth = Math.max(2, baseR*0.01);
+    ctx.strokeStyle = 'rgba(255,255,255,0.06)';
+    ctx.stroke();
+
+    ctx.restore();
+  }
+
+  // init
+  resizeCanvas();
+  updateLabels();
+  draw();
+
+})();
+</script>
